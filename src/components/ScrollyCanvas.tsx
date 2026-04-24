@@ -1,15 +1,16 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useScroll, useTransform, motion } from "framer-motion";
+import { useScroll, useTransform, motion, AnimatePresence } from "framer-motion";
 
 const FRAME_COUNT = 75; // 00 to 74
-const START_FRAME = 0;
 
 export default function ScrollyCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [images, setImages] = useState<HTMLImageElement[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(0);
 
   // Track scroll progress of the 500vh container
   const { scrollYProgress } = useScroll({
@@ -21,21 +22,39 @@ export default function ScrollyCanvas() {
   const frameIndex = useTransform(scrollYProgress, [0, 1], [0, FRAME_COUNT - 1]);
 
   useEffect(() => {
-    // Preload all images
+    // Optimized Preloading Logic
     const preloadImages = async () => {
-      const loadedImages: HTMLImageElement[] = [];
-      for (let i = 0; i < FRAME_COUNT; i++) {
-        const img = new Image();
-        // Format: frame_00_delay-0.2s.webp
-        const indexStr = i.toString().padStart(2, "0");
-        img.src = `/sequence/frame_${indexStr}_delay-0.2s.webp`;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.onerror = resolve; // Continue even if one fails
+      let loadedCount = 0;
+      const loadedImages: HTMLImageElement[] = new Array(FRAME_COUNT);
+
+      // Create an array of indices to load in parallel
+      const indices = Array.from({ length: FRAME_COUNT }, (_, i) => i);
+
+      // Load images in parallel batches
+      const promises = indices.map((i) => {
+        return new Promise<void>((resolve) => {
+          const img = new Image();
+          const indexStr = i.toString().padStart(2, "0");
+          img.src = `/sequence/frame_${indexStr}_delay-0.2s.webp`;
+          
+          img.onload = () => {
+            loadedImages[i] = img;
+            loadedCount++;
+            setLoadProgress(Math.round((loadedCount / FRAME_COUNT) * 100));
+            // Once the first 5 frames are loaded, we can hide the loader if we want a "fast start"
+            // But for sequence scrubbing, it's better to load at least 50%
+            if (loadedCount > FRAME_COUNT * 0.4) {
+              // Smooth transition later
+            }
+            resolve();
+          };
+          img.onerror = resolve;
         });
-        loadedImages.push(img);
-      }
-      setImages(loadedImages);
+      });
+
+      await Promise.all(promises);
+      setImages(loadedImages.filter(img => img !== undefined));
+      setIsLoading(false);
     };
 
     preloadImages();
@@ -114,6 +133,34 @@ export default function ScrollyCanvas() {
   return (
     <div ref={containerRef} className="h-[500vh] w-full relative">
       <div className="sticky top-0 h-screen w-full overflow-hidden">
+        
+        {/* Loading Overlay */}
+        <AnimatePresence>
+          {isLoading && (
+            <motion.div 
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1, ease: "easeInOut" }}
+              className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#121212]"
+            >
+              <motion.div 
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="text-white text-3xl font-bold mb-8 tracking-widest uppercase italic"
+              >
+                Initializing
+              </motion.div>
+              <div className="w-64 h-[2px] bg-white/10 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${loadProgress}%` }}
+                />
+              </div>
+              <p className="mt-4 text-neutral-500 text-xs tracking-[0.2em] font-mono">{loadProgress}%</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full object-cover"
